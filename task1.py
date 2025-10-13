@@ -28,9 +28,11 @@ class Birthday(Field):
     """Клас для дня народження у форматі DD.MM.YYYY"""
     def __init__(self, value):
         try:
-            self.value = datetime.strptime(value, "%d.%m.%Y").date()
+            datetime.strptime(value, "%d.%m.%Y")
         except ValueError:
             raise ValueError("Невірний формат дати. Використовуйте DD.MM.YYYY")
+        self.value = value
+
 
 
 class Record:
@@ -52,11 +54,11 @@ class Record:
 
     def edit_phone(self, old_phone, new_phone):
         phone_obj = self.find_phone(old_phone)
-        if phone_obj:
-            self.phones.remove(phone_obj)
-            self.phones.append(Phone(new_phone))
-        else:
+        if not phone_obj:
             raise ValueError(f"Старий номер {old_phone} не знайдено.")
+        new_phone_obj = Phone(new_phone)
+        self.phones.remove(phone_obj)
+        self.phones.append(new_phone_obj)
 
     def find_phone(self, phone):
         for p in self.phones:
@@ -69,32 +71,46 @@ class Record:
 
     def __str__(self):
         phones_list = ", ".join(p.value for p in self.phones) if self.phones else "немає номерів"
-        bday_str = self.birthday.value.strftime("%d.%m.%Y") if self.birthday else "немає"
+        bday_str = self.birthday.value if self.birthday else "немає"
         return f"{self.name.value}: {phones_list}, день народження: {bday_str}"
 
 
 class AddressBook(UserDict):
     """Клас для зберігання всіх контактів"""
+
     def add_record(self, record: Record):
         self.data[record.name.value] = record
+
+    def find(self, name):
+        return self.data.get(name)
+
+    def delete(self, name):
+        if name in self.data:
+            del self.data[name]
 
     def get_upcoming_birthdays(self, days=7):
         upcoming = []
         today = date.today()
+
         for record in self.data.values():
             if record.birthday:
-                bday_this_year = record.birthday.value.replace(year=today.year)
+                bday_date = datetime.strptime(record.birthday.value, "%d.%m.%Y").date()
+                bday_this_year = bday_date.replace(year=today.year)
+
                 if bday_this_year < today:
                     bday_this_year = bday_this_year.replace(year=today.year + 1)
-                # Переносимо на робочий день, якщо випадає на вихідний
-                if bday_this_year.weekday() >= 5:
-                    bday_this_year += timedelta(days=(7 - bday_this_year.weekday()))
-                diff = (bday_this_year - today).days
-                if 0 <= diff <= days:
+
+                if bday_this_year.weekday() == 5:
+                    bday_this_year += timedelta(days=2)
+                elif bday_this_year.weekday() == 6:
+                    bday_this_year += timedelta(days=1)
+
+                if 0 <= (bday_this_year - today).days <= days:
                     upcoming.append({
                         "name": record.name.value,
                         "birthday": bday_this_year.strftime("%d.%m.%Y")
                     })
+
         return upcoming
 
     def __str__(self):
@@ -118,52 +134,64 @@ def input_error(func):
 
 @input_error
 def add_contact(args, book: AddressBook):
-    name, phone, *_ = args
-    record = book[name] if name in book else Record(name)
-    if name not in book:
-        book.add_record(record)
-        message = "Контакт додано."
-    else:
-        message = "Контакт оновлено."
-    if phone:
+    name, phone = args
+    record = book.find(name)
+    if not record:
+        record = Record(name)
         record.add_phone(phone)
-    return message
+        book.add_record(record)
+        return f"Контакт {name} додано з номером {phone}."
+    else:
+        record.add_phone(phone)
+        return f"До контакту {name} додано номер {phone}."
 
 @input_error
 def change_contact(args, book: AddressBook):
     name, old_phone, new_phone = args
-    record = book[name]
-    record.edit_phone(old_phone, new_phone)
-    return f"У контакті {name} номер {old_phone} замінено на {new_phone}."
+    record = book.find(name)
+    if record:
+        record.edit_phone(old_phone, new_phone)
+        return f"У контакті {name} номер {old_phone} замінено на {new_phone}."
+    else:
+        raise KeyError
 
 @input_error
 def show_phone(args, book: AddressBook):
     name = args[0]
-    record = book[name]
-    if record.phones:
+    record = book.find(name)
+    if record:
         return ", ".join(p.value for p in record.phones)
-    return "Телефони відсутні."
+    else:
+        raise KeyError
 
 @input_error
 def delete_contact(args, book: AddressBook):
     name = args[0]
-    del book.data[name]
-    return f"Контакт {name} видалено."
+    if book.find(name):
+        book.delete(name)
+        return f"Контакт {name} видалено."
+    else:
+        raise KeyError
 
 @input_error
 def add_birthday(args, book: AddressBook):
     name, birthday_str = args
-    record = book[name] if name in book else Record(name)
-    if name not in book:
-        book.add_record(record)
+    record = book.find(name)
+    if not record:
+        raise KeyError
     record.add_birthday(birthday_str)
     return f"День народження для контакту {name} встановлено: {birthday_str}"
+
 
 @input_error
 def show_birthday(args, book: AddressBook):
     name = args[0]
-    record = book[name]
-    return record.birthday.value.strftime("%d.%m.%Y")
+    record = book.find(name)
+    if not record:
+        raise KeyError
+    if not record.birthday:
+        raise ValueError("День народження не встановлено.")
+    return record.birthday.value
 
 @input_error
 def birthdays(args, book: AddressBook):
